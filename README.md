@@ -37,7 +37,7 @@ apt update && apt install -y jq netcat-openbsd curl docker.io
 ```yaml
 your-node-name.infra:
   ansible_host: 1.2.3.4
-  kuma_push_url: "[https://kuma.example.com/api/push/YOUR_TOKEN?v=1](https://kuma.example.com/api/push/YOUR_TOKEN?v=1)"
+  kuma_push_url: "https://kuma.example.com/api/push/YOUR_TOKEN?v=1"
   vpn_port: 443
   vpn_proto: "tcp"           # tcp для Reality, udp для Hysteria
   sni: "your-sni-domain.com"
