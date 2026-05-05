@@ -62,7 +62,6 @@ handle_local_fail() {
     echo "$FAIL_COUNT" > "$FAIL_FILE"
 
     log "LOCAL FAIL: $REASON (Count: $FAIL_COUNT/$MAX_FAILS)"
-    # Отправка уведомления с правильным разделителем
     curl $CURL_OPTS "${KUMA_PUSH_URL}${SEP}status=down&msg=${MSG_ENC}" > /dev/null 2>&1
 
     if [ "$FAIL_COUNT" -ge "$MAX_FAILS" ]; then
@@ -86,7 +85,6 @@ handle_network_fail() {
     local MSG_ENC=$(encode_url "$REASON")
     log "NETWORK FAIL: $REASON"
     echo 0 > "$FAIL_FILE"
-    # Отправка уведомления с правильным разделителем
     curl $CURL_OPTS "${KUMA_PUSH_URL}${SEP}status=down&msg=${MSG_ENC}" > /dev/null 2>&1
     exit 1
 }
@@ -95,12 +93,10 @@ handle_network_fail() {
 # Проверки
 # ==========================================
 
-# 1. Интернет
 if ! (curl $CURL_OPTS https://1.1.1.1 > /dev/null 2>&1 || curl $CURL_OPTS https://google.com > /dev/null 2>&1); then
     handle_network_fail "No_internet"
 fi
 
-# 2. Мост
 if [ -n "$DE_IP" ] && [ -n "$DE_PORT" ]; then
     NC_BRIDGE_FLAGS="-z"
     [ "$DE_PROTO" = "udp" ] && NC_BRIDGE_FLAGS="-zu"
@@ -110,7 +106,6 @@ if [ -n "$DE_IP" ] && [ -n "$DE_PORT" ]; then
     fi
 fi
 
-# 3. Контейнер (с защитой от Ansible)
 if ! timeout 5 docker inspect -f '{% raw %}{{.State.Running}}{% endraw %}' remnanode 2>/dev/null | grep -q "true"; then
     handle_local_fail "Container_dead"
 fi
@@ -123,7 +118,6 @@ TLS_COUNT=$(cat "$TLS_COUNTER_FILE" 2>/dev/null | grep -Eo '^[0-9]+$' || echo 0)
 if [ "$LOCAL_VPN_PROTO" = "tcp" ]; then
     if [ "$TLS_COUNT" -ge 5 ]; then
         TLS_COUNT=0
-        # L7: TLS проверка
         if ! timeout 5 bash -c "echo | openssl s_client -connect 127.0.0.1:$LOCAL_VPN_PORT -servername $REALITY_SNI 2>/dev/null | grep -q 'CONNECTED'"; then
             log "WARNING: openssl TLS failed, trying curl fallback"
             if ! curl -k --connect-timeout 5 -H "User-Agent: Mozilla/5.0" --resolve "$REALITY_SNI:$LOCAL_VPN_PORT:127.0.0.1" "https://$REALITY_SNI:$LOCAL_VPN_PORT" > /dev/null 2>&1; then
@@ -132,21 +126,18 @@ if [ "$LOCAL_VPN_PROTO" = "tcp" ]; then
             fi
         fi
     else
-        # L4: TCP проверка
         if ! nc -z -w 3 127.0.0.1 "$LOCAL_VPN_PORT" > /dev/null 2>&1; then
             echo "$TLS_COUNT" > "$TLS_COUNTER_FILE"
             handle_local_fail "Port_unreachable"
         fi
     fi
 else
-    # ДЛЯ UDP (Hysteria 2):
     if ! nc -zu -w 3 127.0.0.1 "$LOCAL_VPN_PORT" > /dev/null 2>&1; then
         echo "$TLS_COUNT" > "$TLS_COUNTER_FILE"
         handle_local_fail "UDP_Port_unreachable"
     fi
 fi
 
-# Сохраняем обновлённый счётчик
 echo $((TLS_COUNT + 1)) > "$TLS_COUNTER_FILE"
 
 # ==========================================
@@ -158,5 +149,4 @@ if [ "$CURRENT_FAILS" -ne 0 ]; then
     echo 0 > "$FAIL_FILE"
 fi
 
-# Финальный пуш (статус UP) с динамическим разделителем
 curl -fsS -m 5 --connect-timeout 3 --retry 3 "${KUMA_PUSH_URL}${SEP}status=up&msg=OK" > /dev/null 2>&1
