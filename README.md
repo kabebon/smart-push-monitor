@@ -33,14 +33,15 @@ apt update && apt install -y jq netcat-openbsd curl docker.io
 ```
 2. Настройка инвентаря (Ansible/Semaphore)
 Добавьте переменные для ваших хостов в YAML-инвентарь:
-```bash
-ru-mow-09.infra:
-  ansible_host: 80.66.81.130
-  kuma_push_url: "[https://kuma.example.com/api/push/token?v=1](https://kuma.example.com/api/push/token?v=1)"
+
+```yaml
+your-node-name.infra:
+  ansible_host: 1.2.3.4
+  kuma_push_url: "[https://kuma.example.com/api/push/YOUR_TOKEN?v=1](https://kuma.example.com/api/push/YOUR_TOKEN?v=1)"
   vpn_port: 443
   vpn_proto: "tcp"           # tcp для Reality, udp для Hysteria
-  sni: "google.com"
-  bridge_ip: "31.56.39.237"  # Опционально: IP моста
+  sni: "your-sni-domain.com"
+  bridge_ip: "5.6.7.8"       # Опционально: IP моста (для схем с транзитом)
   bridge_port: 443
   bridge_port_proto: "udp"   # Протокол моста
 ```
@@ -48,7 +49,7 @@ ru-mow-09.infra:
 3. Деплой
 Используйте плейбук для автоматического копирования шаблона и настройки Cron:
 
-```bash
+```yaml
 - name: Deploy Smart Monitor
   hosts: vpn_nodes
   become: yes
