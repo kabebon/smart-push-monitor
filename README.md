@@ -25,7 +25,7 @@
 
 ## 📖 Руководство по установке
 
-### 0. Описание файлов проекта
+### Описание файлов проекта
 *   `deploy_monitor.yml` — Ansible-плейбук для автоматической установки зависимостей и настройки Cron.
 *   `smart_push.sh.j2` — Jinja2-шаблон скрипта. В нем используются переменные вида `{{ variable }}`, которые заполняются автоматически при деплое.
 
@@ -70,15 +70,31 @@ LOCAL_VPN_PROTO="tcp"
 ```
 Порядок действий:
 
-1. Установите зависимости:
+1. Установите зависимости и скачайте скрипт:
 ```bash
 apt update && apt install -y jq netcat-openbsd curl docker.io
+curl -L -o /opt/smart_push.sh [https://raw.githubusercontent.com/kabebon/smart-push-monitor/main/UptimeKuma/smart_push.sh.j2](https://raw.githubusercontent.com/kabebon/smart-push-monitor/main/UptimeKuma/smart_push.sh.j2)
 ```
-2. Скопируйте код из smart_push.sh.j2 в файл /opt/smart_push.sh.
+2. Откройте файл для настройки:
+```bash
+nano /opt/smart_push.sh
+```
 
-3. Отредактируйте секцию Настройки, вписав свои данные вместо фигурных скобок.
+3. В самом начале файла найдите блок переменных. Замените фигурные скобки {{ ... }} на ваши реальные данные.
+Пример настройки:
+```bash
+# Было:
+KUMA_PUSH_URL="{{ kuma_push_url }}"
+LOCAL_VPN_PORT="{{ vpn_port }}"
+LOCAL_VPN_PROTO="{{ vpn_proto | default('tcp') }}"
 
-Дайте права и добавьте в Cron:
+# Должно стать:
+KUMA_PUSH_URL="https://status.domain.com/api/push/nS5QnZK3en?v=1"
+LOCAL_VPN_PORT="443"
+LOCAL_VPN_PROTO="tcp"
+```   
+
+4. Дайте права и добавьте в Cron:
 
 ```bash
 chmod +x /opt/smart_push.sh
