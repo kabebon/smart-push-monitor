@@ -47,38 +47,43 @@ your-node-name.infra:
   bridge_port: 443
   bridge_port_proto: "udp"   # Протокол моста
 ```
-3. **Запуск:** Запустите плейбук. Ansible автоматически подставит данные в шаблон и создаст готовый скрипт /opt/smart_push.sh.
-   Вариант 2: Ручная установка (Manual Setup)
+3. **Запуск:** Запустите плейбук.
+  Ansible автоматически подставит данные в шаблон и создаст готовый скрипт /opt/smart_push.sh
+
+### Вариант 2: Ручная установка (Manual Setup)
+
 Если вы не используете Ansible, вам нужно превратить шаблон .j2 в обычный скрипт .sh, заменив переменные вручную.
 
 Пример настройки файла (как должен выглядеть блок настроек в /opt/smart_push.sh):
 
-Bash
 # Было в smart_push.sh.j2:
+```bash
 KUMA_PUSH_URL="{{ kuma_push_url }}"
 LOCAL_VPN_PORT="{{ vpn_port }}"
 LOCAL_VPN_PROTO="{{ vpn_proto | default('tcp') }}"
-
+```
 # Должно стать в /opt/smart_push.sh:
-KUMA_PUSH_URL="[https://status.domain.com/api/push/nS5QnZK3en?v=1](https://status.domain.com/api/push/nS5QnZK3en?v=1)"
+```bash
+KUMA_PUSH_URL="https://status.domain.com/api/push/nS5QnZK3en?v=1"
 LOCAL_VPN_PORT="443"
 LOCAL_VPN_PROTO="tcp"
+```
 Порядок действий:
 
-Установите зависимости:
+1. Установите зависимости:
+```bash
 apt update && apt install -y jq netcat-openbsd curl docker.io
+```
+2. Скопируйте код из smart_push.sh.j2 в файл /opt/smart_push.sh.
 
-Скопируйте код из smart_push.sh.j2 в файл /opt/smart_push.sh.
-
-Отредактируйте секцию Настройки, вписав свои данные вместо фигурных скобок.
+3. Отредактируйте секцию Настройки, вписав свои данные вместо фигурных скобок.
 
 Дайте права и добавьте в Cron:
 
-Bash
+```bash
 chmod +x /opt/smart_push.sh
 (crontab -l 2>/dev/null; echo "* * * * * /opt/smart_push.sh") | crontab -
-
----
+```
 
 ## 📊 Интерпретация статусов
 
