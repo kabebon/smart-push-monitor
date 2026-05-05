@@ -1,0 +1,32 @@
+---
+- name: Деплой системы умного мониторинга на VPN ноды
+  hosts: vpn_nodes
+  become: yes
+  tasks:
+    - name: Установка необходимых пакетов (jq, nc, curl)
+      apt:
+        name:
+          - jq
+          - netcat-openbsd
+          - curl
+          - docker.io
+        state: present
+        update_cache: yes
+
+    - name: Создание и настройка скрипта из шаблона
+      template:
+        src: smart_push.sh.j2  # Ищет файл в той же папке, что и плейбук
+        dest: /opt/smart_push.sh
+        mode: '0755'
+
+    - name: Добавление задачи в Cron (запуск каждую минуту)
+      cron:
+        name: "Run Smart Push Monitor"
+        minute: "*"
+        job: "/opt/smart_push.sh"
+
+    - name: Проверка наличия лог-файла
+      file:
+        path: /var/log/smart_push.log
+        state: touch
+        mode: '0644'
