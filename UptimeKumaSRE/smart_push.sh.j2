@@ -1,0 +1,152 @@
+#!/bin/bash
+
+# ==========================================
+# 0. Защита от параллельного выполнения
+# ==========================================
+LOCK_FILE="/tmp/smart_push.lock"
+exec 200>"$LOCK_FILE"
+flock -n 200 || exit 0
+
+# ==========================================
+# Настройки (Ansible подставит сюда данные)
+# ==========================================
+KUMA_PUSH_URL="{{ kuma_push_url }}"
+LOCAL_VPN_PORT="{{ vpn_port }}"
+LOCAL_VPN_PROTO="{{ vpn_proto | default('tcp') }}"
+REALITY_SNI="{{ sni }}"
+
+DE_IP="{{ bridge_ip | default('') }}"
+DE_PORT="{{ bridge_port | default('') }}"
+DE_PROTO="{{ bridge_port_proto | default('tcp') }}"
+
+FAIL_FILE="/tmp/remnawave_fail_count"
+RESTART_TS_FILE="/tmp/remnawave_last_restart"
+LOG_FILE="/var/log/smart_push.log"
+TLS_COUNTER_FILE="/tmp/tls_check_counter"
+
+MAX_FAILS=3
+COOLDOWN=300
+CURL_OPTS="-fsS -m 5 --connect-timeout 3 --retry 1"
+
+# ==========================================
+# Логирование + ротация
+# ==========================================
+if [ -f "$LOG_FILE" ] && [ $(stat -c%s "$LOG_FILE") -gt 1048576 ]; then
+    mv "$LOG_FILE" "$LOG_FILE.$(date +%s)" 2>/dev/null || :
+fi
+
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | $1" >> "$LOG_FILE"
+}
+
+encode_url() {
+    jq -rn --arg v "$1" '$v|@uri' 2>/dev/null || echo "$1" | sed 's/ /_/g'
+}
+
+# ==========================================
+# Обработчики сбоев
+# ==========================================
+handle_local_fail() {
+    local REASON=$1
+    local MSG_ENC=$(encode_url "$REASON")
+
+    FAIL_COUNT=$(cat "$FAIL_FILE" 2>/dev/null || echo 0)
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    echo "$FAIL_COUNT" > "$FAIL_FILE"
+
+    log "LOCAL FAIL: $REASON (Count: $FAIL_COUNT/$MAX_FAILS)"
+    curl $CURL_OPTS "${KUMA_PUSH_URL}&status=down&msg=${MSG_ENC}" > /dev/null 2>&1
+
+    if [ "$FAIL_COUNT" -ge "$MAX_FAILS" ]; then
+        local NOW=$(date +%s)
+        local LAST_RESTART=$(cat "$RESTART_TS_FILE" 2>/dev/null || echo 0)
+
+        if [ $((NOW - LAST_RESTART)) -ge "$COOLDOWN" ]; then
+            log "REMEDIATION: Restarting container remnanode"
+            timeout 10 docker restart remnanode > /dev/null 2>&1
+            echo "$NOW" > "$RESTART_TS_FILE"
+        else
+            log "REMEDIATION: In cooldown"
+        fi
+        echo 0 > "$FAIL_FILE"
+    fi
+    exit 1
+}
+
+handle_network_fail() {
+    local REASON=$1
+    local MSG_ENC=$(encode_url "$REASON")
+    log "NETWORK FAIL: $REASON"
+    echo 0 > "$FAIL_FILE"
+    curl $CURL_OPTS "${KUMA_PUSH_URL}&status=down&msg=${MSG_ENC}" > /dev/null 2>&1
+    exit 1
+}
+
+# ==========================================
+# Проверки
+# ==========================================
+
+# 1. Интернет
+if ! (curl $CURL_OPTS https://1.1.1.1 > /dev/null 2>&1 || curl $CURL_OPTS https://google.com > /dev/null 2>&1); then
+    handle_network_fail "No_internet"
+fi
+
+# 2. Мост
+if [ -n "$DE_IP" ] && [ -n "$DE_PORT" ]; then
+    NC_BRIDGE_FLAGS="-z"
+    [ "$DE_PROTO" = "udp" ] && NC_BRIDGE_FLAGS="-zu"
+    
+    if ! nc $NC_BRIDGE_FLAGS -w 3 "$DE_IP" "$DE_PORT" > /dev/null 2>&1; then
+        handle_network_fail "Bridge_down"
+    fi
+fi
+
+# 3. Контейнер (с защитой от Ansible)
+if ! timeout 5 docker inspect -f '{% raw %}{{.State.Running}}{% endraw %}' remnanode 2>/dev/null | grep -q "true"; then
+    handle_local_fail "Container_dead"
+fi
+
+# ==========================================
+# 4. Гибридная проверка L4 / L7
+# ==========================================
+TLS_COUNT=$(cat "$TLS_COUNTER_FILE" 2>/dev/null | grep -Eo '^[0-9]+$' || echo 0)
+
+if [ "$LOCAL_VPN_PROTO" = "tcp" ]; then
+    if [ "$TLS_COUNT" -ge 5 ]; then
+        TLS_COUNT=0
+        # L7: TLS проверка
+        if ! timeout 5 bash -c "echo | openssl s_client -connect 127.0.0.1:$LOCAL_VPN_PORT -servername $REALITY_SNI 2>/dev/null | grep -q 'CONNECTED'"; then
+            log "WARNING: openssl TLS failed, trying curl fallback"
+            if ! curl -k --connect-timeout 5 -H "User-Agent: Mozilla/5.0" --resolve "$REALITY_SNI:$LOCAL_VPN_PORT:127.0.0.1" "https://$REALITY_SNI:$LOCAL_VPN_PORT" > /dev/null 2>&1; then
+                echo "$TLS_COUNT" > "$TLS_COUNTER_FILE"
+                handle_local_fail "TLS_handshake_failed"
+            fi
+        fi
+    else
+        # L4: TCP проверка
+        if ! nc -z -w 3 127.0.0.1 "$LOCAL_VPN_PORT" > /dev/null 2>&1; then
+            echo "$TLS_COUNT" > "$TLS_COUNTER_FILE"
+            handle_local_fail "Port_unreachable"
+        fi
+    fi
+else
+    # ДЛЯ UDP (Hysteria 2):
+    if ! nc -zu -w 3 127.0.0.1 "$LOCAL_VPN_PORT" > /dev/null 2>&1; then
+        echo "$TLS_COUNT" > "$TLS_COUNTER_FILE"
+        handle_local_fail "UDP_Port_unreachable"
+    fi
+fi
+
+# Сохраняем обновлённый счётчик
+echo $((TLS_COUNT + 1)) > "$TLS_COUNTER_FILE"
+
+# ==========================================
+# OK
+# ==========================================
+CURRENT_FAILS=$(cat "$FAIL_FILE" 2>/dev/null || echo 0)
+if [ "$CURRENT_FAILS" -ne 0 ]; then
+    log "RECOVERY: Services restored"
+    echo 0 > "$FAIL_FILE"
+fi
+
+curl -fsS -m 5 --connect-timeout 3 --retry 3 "${KUMA_PUSH_URL}&status=up&msg=OK" > /dev/null 2>&1
