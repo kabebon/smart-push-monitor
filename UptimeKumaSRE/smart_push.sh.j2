@@ -28,6 +28,13 @@ MAX_FAILS=3
 COOLDOWN=300
 CURL_OPTS="-fsS -m 5 --connect-timeout 3 --retry 1"
 
+# === АВТОМАТИЧЕСКИЙ ВЫБОР РАЗДЕЛИТЕЛЯ (?, &) ===
+if [[ "$KUMA_PUSH_URL" == *"?"* ]]; then
+    SEP="&"
+else
+    SEP="?"
+fi
+
 # ==========================================
 # Логирование + ротация
 # ==========================================
@@ -55,7 +62,8 @@ handle_local_fail() {
     echo "$FAIL_COUNT" > "$FAIL_FILE"
 
     log "LOCAL FAIL: $REASON (Count: $FAIL_COUNT/$MAX_FAILS)"
-    curl $CURL_OPTS "${KUMA_PUSH_URL}&status=down&msg=${MSG_ENC}" > /dev/null 2>&1
+    # Отправка уведомления с правильным разделителем
+    curl $CURL_OPTS "${KUMA_PUSH_URL}${SEP}status=down&msg=${MSG_ENC}" > /dev/null 2>&1
 
     if [ "$FAIL_COUNT" -ge "$MAX_FAILS" ]; then
         local NOW=$(date +%s)
@@ -78,7 +86,8 @@ handle_network_fail() {
     local MSG_ENC=$(encode_url "$REASON")
     log "NETWORK FAIL: $REASON"
     echo 0 > "$FAIL_FILE"
-    curl $CURL_OPTS "${KUMA_PUSH_URL}&status=down&msg=${MSG_ENC}" > /dev/null 2>&1
+    # Отправка уведомления с правильным разделителем
+    curl $CURL_OPTS "${KUMA_PUSH_URL}${SEP}status=down&msg=${MSG_ENC}" > /dev/null 2>&1
     exit 1
 }
 
@@ -149,4 +158,5 @@ if [ "$CURRENT_FAILS" -ne 0 ]; then
     echo 0 > "$FAIL_FILE"
 fi
 
-curl -fsS -m 5 --connect-timeout 3 --retry 3 "${KUMA_PUSH_URL}&status=up&msg=OK" > /dev/null 2>&1
+# Финальный пуш (статус UP) с динамическим разделителем
+curl -fsS -m 5 --connect-timeout 3 --retry 3 "${KUMA_PUSH_URL}${SEP}status=up&msg=OK" > /dev/null 2>&1
